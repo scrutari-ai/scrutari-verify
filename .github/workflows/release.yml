@@ -1,0 +1,144 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # gnu rather than musl: the aws-lc-rs C build is the heavy part of
+          # this crate and is well supported on gnu; a musl build needs a full
+          # musl C toolchain and is not worth the fragility for a verifier
+          # auditors can also build from source.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf scrutari-verify-${{ github.ref_name }}-${{ matrix.target }}.tar.gz scrutari-verify
+          mv scrutari-verify-${{ github.ref_name }}-${{ matrix.target }}.tar.gz "$GITHUB_WORKSPACE"
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/scrutari-verify.exe" -DestinationPath "scrutari-verify-${{ github.ref_name }}-${{ matrix.target }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: scrutari-verify-${{ github.ref_name }}-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      # contents: write uploads the release assets. id-token: write
+      # enables keyless cosign signing: the job's GitHub OIDC token
+      # is exchanged for a short-lived Fulcio certificate that binds
+      # the signature to this repository and workflow.
+      contents: write
+      id-token: write
+    outputs:
+      # Consumed by the `provenance` job below.
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate SHA-256SUMS
+        run: |
+          cd dist
+          sha256sum scrutari-verify-* > SHA-256SUMS
+          cat SHA-256SUMS
+
+      # Keyless signing of the checksums file. There is no long-lived
+      # signing key to store, rotate, or leak: cosign gets a
+      # certificate from the Fulcio CA for this exact repo + workflow
+      # identity and records the signature in the Rekor public
+      # transparency log. Verifying SHA-256SUMS plus checking each
+      # binary against it extends trust to every artifact. The exact
+      # verification commands are in README.md, "Verifying a release".
+      # Pinned by commit SHA (tag v3.10.1, installs Cosign v2.6.1).
+      # Deliberately v3 of the INSTALLER, not v4: `@v4` does not even
+      # resolve (upstream publishes v4.x.y tags but no floating `v4`
+      # major tag), and v4 installs Cosign v3, whose `sign-blob`
+      # switched to the bundle format and would break both the
+      # --output-signature/--output-certificate flags below and the
+      # `cosign verify-blob` instructions in README.md. Migrating to
+      # the Cosign v3 bundle format (sign-blob --bundle + README
+      # update) is a deliberate follow-up, not a drive-by.
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - name: Sign SHA-256SUMS (cosign, keyless)
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/SHA-256SUMS.sig \
+            --output-certificate dist/SHA-256SUMS.pem \
+            dist/SHA-256SUMS
+
+      # Subject digests for the SLSA provenance job below: every
+      # release archive plus the checksums file, in the base64-coded
+      # sha256sum format the generator expects.
+      - name: Compute provenance subjects
+        id: hash
+        run: |
+          cd dist
+          echo "hashes=$(sha256sum scrutari-verify-* SHA-256SUMS | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/scrutari-verify-*
+            dist/SHA-256SUMS
+            dist/SHA-256SUMS.sig
+            dist/SHA-256SUMS.pem
+          generate_release_notes: true
+
+  # SLSA v1.0 build provenance over the release artifacts, via the
+  # slsa-github-generator generic generator. The generator runs as a
+  # reusable workflow in an isolated job so the provenance attests to
+  # what THIS workflow built, signed by the generator's own keyless
+  # identity; that isolation is what lets slsa-verifier treat the
+  # claim as trustworthy (SLSA Build L3).
+  #
+  # Reusable workflows must be pinned to an exact release tag (the
+  # generator verifies its own ref at runtime; a sliding major tag
+  # would fail). v2.1.0 is the latest slsa-github-generator release
+  # as of 2026-06; bump deliberately by editing this pin.
+  provenance:
+    needs: release
+    permissions:
+      actions: read    # read the run metadata recorded in the provenance
+      id-token: write  # sign the provenance (keyless, same flow as cosign)
+      contents: write  # upload the provenance file to the release
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.release.outputs.hashes }}
+      provenance-name: scrutari-verify-${{ github.ref_name }}.intoto.jsonl
+      upload-assets: true

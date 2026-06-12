@@ -1,0 +1,50 @@
+[package]
+name = "scrutari-verify"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.93.0"
+license = "Apache-2.0"
+description = "Offline verifier for Scrutari audit-export packs (format v2): proves integrity, Merkle inclusion, signature validity, and chain continuity with no network and no Scrutari services."
+repository = "https://github.com/scrutari-ai/scrutari-verify"
+keywords = ["audit", "merkle", "verification", "compliance", "tamper-evidence"]
+categories = ["command-line-utilities", "cryptography"]
+
+# A library (the verification engine, unit/integration-testable) plus a thin
+# CLI binary over it. Keeping the engine in `lib` lets `tests/` build fixtures
+# and assert PASS/FAIL without driving the process.
+[lib]
+name = "scrutari_verify"
+path = "src/lib.rs"
+
+[[bin]]
+name = "scrutari-verify"
+path = "src/main.rs"
+
+[dependencies]
+# All cryptography (Ed25519 verify, ECDSA P-256 verify, SHA-256) runs on
+# aws-lc-rs, the same backend the Scrutari gateway signs with. The backend
+# variant is selected by the [features] block below; the default `std-crypto`
+# feature enables the standard aws-lc-sys build.
+aws-lc-rs = { version = "1.17.0", default-features = false }
+# ML-DSA-87 (FIPS 204) anchor-signature verification, for packs exported
+# under Scrutari's CNSA 2.0 posture. Pure Rust; pinned to the same version
+# the gateway signs with so a PASS is byte-for-byte the signer's math.
+fips204 = "0.4.6"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+clap = { version = "4.6.1", features = ["derive"] }
+
+# aws-lc-rs's non-FIPS (`aws-lc-sys`) and FIPS-validated (`fips`) builds are
+# mutually exclusive at compile time, so the choice is expressed as features:
+#
+#   Standard build:  cargo build
+#   FIPS build:      cargo build --no-default-features --features fips
+#                    (requires the aws-lc-rs FIPS build prerequisites: cmake, go)
+[features]
+default = ["std-crypto"]
+std-crypto = ["aws-lc-rs/aws-lc-sys"]
+fips = ["aws-lc-rs/fips"]
+
+[profile.release]
+strip = true
+lto = true
