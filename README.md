@@ -54,8 +54,17 @@ Be precise about the trust boundary:
 
 ## Install
 
-From source (requires a Rust toolchain, 1.87 or newer, and a C compiler for
-the aws-lc-rs crypto backend):
+All install paths need a Rust toolchain (1.93 or newer) and a C compiler for
+the aws-lc-rs crypto backend.
+
+From crates.io (the simplest path, and a second independent install channel
+with its own supply-chain provenance):
+
+```
+cargo install scrutari-verify
+```
+
+From source:
 
 ```
 git clone https://github.com/scrutari-ai/scrutari-verify
@@ -65,9 +74,10 @@ cargo install --path .
 
 Prebuilt binaries for Linux (x86_64), macOS (Apple Silicon), and Windows
 (x86_64) are attached to each tagged GitHub release, together with a
-`SHA-256SUMS` file. Verify the checksum before running a prebuilt binary, or
-simply build from source; the build is small and has five direct dependencies
-(`aws-lc-rs`, `fips204`, `serde`, `serde_json`, `clap`).
+`SHA-256SUMS` file. Verify the checksum before running a prebuilt binary (see
+"Verifying a release" below), or build from source; the build is small and has
+five direct dependencies (`aws-lc-rs`, `fips204`, `serde`, `serde_json`,
+`clap`).
 
 ### Verifying a release
 

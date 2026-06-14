@@ -120,6 +120,37 @@ jobs:
             dist/SHA-256SUMS.pem
           generate_release_notes: true
 
+  # Publish to crates.io so auditors can `cargo install scrutari-verify`
+  # from the public Rust registry: a second, independent install path with
+  # its own supply-chain provenance, which strengthens the "verify with a
+  # tool you do not have to trust us to distribute" story.
+  #
+  # Gated on the token being present. GitHub does not allow reading a secret
+  # in a job-level `if:`, so the gate is a STEP-level check: the secret is
+  # surfaced as an env var and the step skips cleanly (exit 0) when it is
+  # empty. This means a tag push still produces a fully signed GitHub release
+  # even before CARGO_REGISTRY_TOKEN is configured; once the token is added,
+  # the next tag also publishes to crates.io. `needs: build` so a version is
+  # never published when the cross-platform build is red.
+  publish-crate:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish to crates.io (skipped when token absent)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "CARGO_REGISTRY_TOKEN not configured; skipping crates.io publish."
+            echo "Add the secret and re-tag to publish this version to crates.io."
+            exit 0
+          fi
+          cargo publish --locked
+
   # SLSA v1.0 build provenance over the release artifacts, via the
   # slsa-github-generator generic generator. The generator runs as a
   # reusable workflow in an isolated job so the provenance attests to
