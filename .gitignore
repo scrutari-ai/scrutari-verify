@@ -1,2 +1,6 @@
 target/
 .fuse_hidden*
+
+# Per-developer JetBrains IDE config. Not part of the published crate or the
+# public repo; each contributor's IDE state is their own.
+.idea/
