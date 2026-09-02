@@ -121,7 +121,6 @@ struct Es256TestKey {
 #[cfg(feature = "wasm-crypto")]
 impl Es256TestKey {
     fn generate() -> Self {
-        use p256::elliptic_curve::sec1::ToEncodedPoint;
         let key = p256::ecdsa::SigningKey::from_slice(&test_seed()).expect("nonzero seed");
         let public = key
             .verifying_key()

@@ -193,6 +193,12 @@ would require re-signing history with the anchor key.
 Also since v1.1.0: running `scrutari-verify` with no pack argument on a
 terminal prints help instead of waiting silently on stdin.
 
+Since v1.2.0 the crate also carries a pure-Rust verify backend
+(`--no-default-features --features wasm`) that compiles to
+WebAssembly; [scrutari.ai/verify](https://scrutari.ai/verify) runs it
+entirely in the browser. The full test suite passes on both backends,
+so a browser PASS and a CLI PASS are the same math.
+
 ## Pack format v2
 
 A pack is JSONL: one JSON object per line, one tenant and one time window per
