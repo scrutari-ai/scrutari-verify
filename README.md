@@ -124,6 +124,24 @@ slsa-verifier verify-artifact \
 A PASS on all three means the artifact you hold is byte-identical to what
 this repository's release workflow built from the tagged commit.
 
+## Try it in sixty seconds
+
+A fully synthetic sample pack ships in [`sample/`](sample/) for the
+fictional tenant `demo-clinic` (also served at
+https://scrutari.ai/demo-evidence-pack.jsonl). It contains no real
+data: `examples/make_demo_pack.rs` generates it from throwaway keys,
+and doubles as documentation of how a pack is built.
+
+```
+cargo install scrutari-verify
+curl -LO https://scrutari.ai/demo-evidence-pack.jsonl
+scrutari-verify --pack demo-evidence-pack.jsonl
+```
+
+Expected: every check passes and the run ends with
+`RESULT: PASS (pack is complete, untampered, and correctly signed)`.
+Then flip one byte anywhere in the file and run it again.
+
 ## Usage
 
 ```
