@@ -23,3 +23,5 @@ pub mod crypto;
 pub mod hexutil;
 pub mod pack;
 pub mod verify;
+#[cfg(feature = "wasm")]
+pub mod wasm;

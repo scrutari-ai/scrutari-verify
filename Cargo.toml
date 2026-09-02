@@ -25,7 +25,7 @@ path = "src/main.rs"
 # aws-lc-rs, the same backend the Scrutari gateway signs with. The backend
 # variant is selected by the [features] block below; the default `std-crypto`
 # feature enables the standard aws-lc-sys build.
-aws-lc-rs = { version = "1.17.0", default-features = false }
+aws-lc-rs = { version = "1.17.0", default-features = false, optional = true }
 # ML-DSA-87 (FIPS 204) anchor-signature verification, for packs exported
 # under Scrutari's CNSA 2.0 posture. Pure Rust; pinned to the same version
 # the gateway signs with so a PASS is byte-for-byte the signer's math.
@@ -33,6 +33,20 @@ fips204 = "0.4.6"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 clap = { version = "4.6.1", features = ["derive"] }
+
+# ── Pure-Rust backend for the wasm build (and equivalence tests) ──
+# aws-lc-rs does not target wasm32-unknown-unknown, so the browser
+# verifier swaps the crypto backend behind the `wasm-crypto` feature:
+# same public functions, same math, different implementation. The
+# equivalence proof is the whole test suite passing under
+# `--no-default-features --features wasm-crypto` on the host.
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"], optional = true }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "std"], optional = true }
+sha2 = { version = "0.10.9", default-features = false, features = ["std"], optional = true }
+wasm-bindgen = { version = "0.2.106", optional = true }
+# Transitive requirement on wasm32 (pulled via the pure-Rust signature
+# crates): getrandom needs its js backend selected explicitly there.
+getrandom = { version = "0.2.17", features = ["js"], optional = true }
 
 # aws-lc-rs's non-FIPS (`aws-lc-sys`) and FIPS-validated (`fips`) builds are
 # mutually exclusive at compile time, so the choice is expressed as features:
@@ -42,8 +56,18 @@ clap = { version = "4.6.1", features = ["derive"] }
 #                    (requires the aws-lc-rs FIPS build prerequisites: cmake, go)
 [features]
 default = ["std-crypto"]
-std-crypto = ["aws-lc-rs/aws-lc-sys"]
-fips = ["aws-lc-rs/fips"]
+std-crypto = ["dep:aws-lc-rs", "aws-lc-rs/aws-lc-sys"]
+fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
+# Pure-Rust verify backend (no aws-lc). Build the browser bundle with:
+#   --no-default-features --features wasm
+wasm-crypto = ["dep:ed25519-dalek", "dep:p256", "dep:sha2"]
+wasm = ["wasm-crypto", "dep:wasm-bindgen", "dep:getrandom"]
+
+# The demo-pack generator signs with aws-lc, so it only exists on the
+# native backends.
+[[example]]
+name = "make_demo_pack"
+required-features = ["std-crypto"]
 
 [profile.release]
 strip = true

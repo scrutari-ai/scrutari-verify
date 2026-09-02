@@ -8,7 +8,9 @@
 //! gateway's CNSA 2.0 posture. Then each tamper test perturbs one dimension and
 //! asserts the matching check fails — proving the checks bite.
 
+#[cfg(any(feature = "std-crypto", feature = "fips"))]
 use aws_lc_rs::rand::SystemRandom;
+#[cfg(any(feature = "std-crypto", feature = "fips"))]
 use aws_lc_rs::signature::{
     ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, Ed25519KeyPair, KeyPair,
 };
@@ -28,12 +30,14 @@ fn key_id_for(public_key: &[u8]) -> String {
     hex_lower(&hash[..8])
 }
 
+#[cfg(any(feature = "std-crypto", feature = "fips"))]
 struct Ed25519TestKey {
     key_pair: Ed25519KeyPair,
     public: Vec<u8>,
     key_id: String,
 }
 
+#[cfg(any(feature = "std-crypto", feature = "fips"))]
 impl Ed25519TestKey {
     fn generate() -> Self {
         let rng = SystemRandom::new();
@@ -53,12 +57,93 @@ impl Ed25519TestKey {
     }
 }
 
+/// Pure-Rust twin for `--features wasm-crypto` equivalence runs. Same
+/// API, same wire shapes (raw 32-byte key, 64-byte signature); seeds
+/// come from a time+counter SHA-256 mix — test fixtures, not secrets.
+#[cfg(feature = "wasm-crypto")]
+struct Ed25519TestKey {
+    key: ed25519_dalek::SigningKey,
+    public: Vec<u8>,
+    key_id: String,
+}
+
+#[cfg(feature = "wasm-crypto")]
+impl Ed25519TestKey {
+    fn generate() -> Self {
+        let key = ed25519_dalek::SigningKey::from_bytes(&test_seed());
+        let public = key.verifying_key().to_bytes().to_vec();
+        let key_id = key_id_for(&public);
+        Self {
+            key,
+            public,
+            key_id,
+        }
+    }
+
+    fn sign(&self, message: &[u8]) -> Vec<u8> {
+        use ed25519_dalek::Signer;
+        self.key.sign(message).to_bytes().to_vec()
+    }
+}
+
+#[cfg(feature = "wasm-crypto")]
+fn test_seed() -> [u8; 32] {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos()
+        .to_le_bytes();
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed).to_le_bytes();
+    let mut material = Vec::new();
+    material.extend_from_slice(&now);
+    material.extend_from_slice(&count);
+    material.extend_from_slice(b"pack-test-seed");
+    sha256(&material)
+}
+
+#[cfg(any(feature = "std-crypto", feature = "fips"))]
 struct Es256TestKey {
     key_pair: EcdsaKeyPair,
     public: Vec<u8>,
     key_id: String,
 }
 
+#[cfg(feature = "wasm-crypto")]
+struct Es256TestKey {
+    key: p256::ecdsa::SigningKey,
+    public: Vec<u8>,
+    key_id: String,
+}
+
+#[cfg(feature = "wasm-crypto")]
+impl Es256TestKey {
+    fn generate() -> Self {
+        use p256::elliptic_curve::sec1::ToEncodedPoint;
+        let key = p256::ecdsa::SigningKey::from_slice(&test_seed()).expect("nonzero seed");
+        let public = key
+            .verifying_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec();
+        let key_id = key_id_for(&public);
+        Self {
+            key,
+            public,
+            key_id,
+        }
+    }
+
+    fn sign(&self, message: &[u8]) -> Vec<u8> {
+        use p256::ecdsa::signature::Signer;
+        let sig: p256::ecdsa::Signature = self.key.sign(message);
+        sig.to_bytes().to_vec()
+    }
+}
+
+#[cfg(any(feature = "std-crypto", feature = "fips"))]
 impl Es256TestKey {
     fn generate() -> Self {
         let rng = SystemRandom::new();

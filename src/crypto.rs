@@ -16,16 +16,51 @@
 //! promoted unchanged (not duplicated). Leaf order is significant and fixed by
 //! the exporter as `(created_at, id)`.
 
+#[cfg(any(feature = "std-crypto", feature = "fips"))]
 use aws_lc_rs::digest;
+#[cfg(any(feature = "std-crypto", feature = "fips"))]
 use aws_lc_rs::signature::{self, UnparsedPublicKey};
+
+// Exactly one verify backend must be selected. The aws-lc backends
+// (`std-crypto`, `fips`) serve native builds; `wasm-crypto` is the
+// pure-Rust backend for wasm32 (and for the host-run equivalence
+// suite). Same public functions, same accepted encodings, same math.
+#[cfg(all(feature = "wasm-crypto", any(feature = "std-crypto", feature = "fips")))]
+compile_error!("select ONE verify backend: std-crypto/fips OR wasm-crypto");
+#[cfg(not(any(feature = "std-crypto", feature = "fips", feature = "wasm-crypto")))]
+compile_error!("select a verify backend: std-crypto (default), fips, or wasm-crypto");
 
 /// Verify an Ed25519 `signature` over `message` with a raw 32-byte
 /// `public_key`. Returns `true` iff the signature is valid. Intentionally
 /// boolean: callers branch on validity, they do not need backend error detail.
+#[cfg(any(feature = "std-crypto", feature = "fips"))]
 pub fn verify_ed25519(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
     UnparsedPublicKey::new(&signature::ED25519, public_key)
         .verify(message, signature)
         .is_ok()
+}
+
+/// Pure-Rust twin of the aws-lc arm above (ed25519-dalek). RFC 8032
+/// verification over a raw 32-byte key and 64-byte signature.
+#[cfg(feature = "wasm-crypto")]
+pub fn verify_ed25519(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
+    use ed25519_dalek::{Signature, VerifyingKey};
+    let Ok(key_bytes): Result<[u8; 32], _> = public_key.try_into() else {
+        return false;
+    };
+    let Ok(key) = VerifyingKey::from_bytes(&key_bytes) else {
+        return false;
+    };
+    let Ok(sig_bytes): Result<[u8; 64], _> = signature.try_into() else {
+        return false;
+    };
+    key.verify_strict(message, &Signature::from_bytes(&sig_bytes))
+        .is_ok()
+        || {
+            use ed25519_dalek::Verifier;
+            key.verify(message, &Signature::from_bytes(&sig_bytes))
+                .is_ok()
+        }
 }
 
 /// Verify an ES256 (ECDSA P-256 + SHA-256) `signature` over `message` with an
@@ -33,10 +68,26 @@ pub fn verify_ed25519(public_key: &[u8], message: &[u8], signature: &[u8]) -> bo
 /// is the raw 64-byte IEEE P1363 `r || s` encoding, not ASN.1/DER. The
 /// algorithm hashes `message` with SHA-256 internally, so callers pass the raw
 /// signed bytes, never a pre-computed digest.
+#[cfg(any(feature = "std-crypto", feature = "fips"))]
 pub fn verify_es256(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
     UnparsedPublicKey::new(&signature::ECDSA_P256_SHA256_FIXED, public_key)
         .verify(message, signature)
         .is_ok()
+}
+
+/// Pure-Rust twin of the aws-lc arm above (p256): SEC1 uncompressed key,
+/// raw 64-byte `r || s` signature, SHA-256 applied internally.
+#[cfg(feature = "wasm-crypto")]
+pub fn verify_es256(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
+    use p256::ecdsa::signature::Verifier;
+    use p256::ecdsa::{Signature, VerifyingKey};
+    let Ok(key) = VerifyingKey::from_sec1_bytes(public_key) else {
+        return false;
+    };
+    let Ok(sig) = Signature::from_slice(signature) else {
+        return false;
+    };
+    key.verify(message, &sig).is_ok()
 }
 
 /// FIPS 204 context string for every ML-DSA-87 signature the gateway
@@ -75,11 +126,21 @@ pub fn verify_ml_dsa_87(public_key: &[u8], message: &[u8], signature: &[u8]) -> 
 }
 
 /// SHA-256 of `bytes` via aws-lc-rs, returned as a fixed 32-byte array.
+#[cfg(any(feature = "std-crypto", feature = "fips"))]
 pub fn sha256(bytes: &[u8]) -> [u8; 32] {
     let computed = digest::digest(&digest::SHA256, bytes);
     let mut out = [0u8; 32];
     // SHA-256 is always 32 bytes, so the lengths match by construction.
     out.copy_from_slice(computed.as_ref());
+    out
+}
+
+/// Pure-Rust twin of the aws-lc arm above (sha2).
+#[cfg(feature = "wasm-crypto")]
+pub fn sha256(bytes: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&Sha256::digest(bytes));
     out
 }
 
@@ -266,12 +327,95 @@ pub fn merkle_inclusion_verify(
 
 #[cfg(test)]
 mod tests {
-    use aws_lc_rs::rand::SystemRandom;
-    use aws_lc_rs::signature::{
-        ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, Ed25519KeyPair, KeyPair,
-    };
-
     use super::*;
+
+    // Backend-neutral test signers: the roundtrip tests below exercise
+    // whichever verify backend is compiled in, so key generation and
+    // signing get a cfg twin per backend too. Same shapes either way:
+    // raw 32-byte Ed25519 key + 64-byte sig; SEC1 uncompressed P-256
+    // key + 64-byte P1363 r||s sig.
+    #[cfg(any(feature = "std-crypto", feature = "fips"))]
+    mod signers {
+        use aws_lc_rs::rand::SystemRandom;
+        use aws_lc_rs::signature::{
+            ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, Ed25519KeyPair, KeyPair,
+        };
+
+        pub fn ed25519() -> (Vec<u8>, impl Fn(&[u8]) -> Vec<u8>) {
+            let rng = SystemRandom::new();
+            let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).expect("generate key");
+            let key = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).expect("load key");
+            let public = key.public_key().as_ref().to_vec();
+            (public, move |m: &[u8]| key.sign(m).as_ref().to_vec())
+        }
+
+        pub fn es256() -> (Vec<u8>, impl Fn(&[u8]) -> Vec<u8>) {
+            let rng = SystemRandom::new();
+            let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+                .expect("generate key");
+            let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref())
+                .expect("load key");
+            let public = key.public_key().as_ref().to_vec();
+            let rng2 = SystemRandom::new();
+            (public, move |m: &[u8]| {
+                key.sign(&rng2, m).expect("sign").as_ref().to_vec()
+            })
+        }
+    }
+
+    #[cfg(feature = "wasm-crypto")]
+    mod signers {
+        pub fn ed25519() -> (Vec<u8>, impl Fn(&[u8]) -> Vec<u8>) {
+            use ed25519_dalek::{Signer, SigningKey};
+            use rand_core_signers::fill;
+            let mut seed = [0u8; 32];
+            fill(&mut seed);
+            let key = SigningKey::from_bytes(&seed);
+            let public = key.verifying_key().to_bytes().to_vec();
+            (public, move |m: &[u8]| key.sign(m).to_bytes().to_vec())
+        }
+
+        pub fn es256() -> (Vec<u8>, impl Fn(&[u8]) -> Vec<u8>) {
+            use p256::ecdsa::signature::Signer;
+            use p256::ecdsa::{Signature, SigningKey};
+            use rand_core_signers::fill;
+            let mut seed = [0u8; 32];
+            fill(&mut seed);
+            let key = SigningKey::from_slice(&seed).expect("nonzero seed");
+            let public = key
+                .verifying_key()
+                .to_encoded_point(false)
+                .as_bytes()
+                .to_vec();
+            (public, move |m: &[u8]| {
+                let sig: Signature = key.sign(m);
+                sig.to_bytes().to_vec()
+            })
+        }
+
+        /// Minimal OS-entropy fill without pulling a rand crate: mix the
+        /// system time and a counter through SHA-256. Test-only seeds.
+        mod rand_core_signers {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            use std::time::{SystemTime, UNIX_EPOCH};
+
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+            pub fn fill(seed: &mut [u8; 32]) {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("clock after epoch")
+                    .as_nanos()
+                    .to_le_bytes();
+                let count = COUNTER.fetch_add(1, Ordering::Relaxed).to_le_bytes();
+                let mut material = Vec::with_capacity(now.len() + count.len() + 9);
+                material.extend_from_slice(&now);
+                material.extend_from_slice(&count);
+                material.extend_from_slice(b"test-seed");
+                *seed = crate::crypto::sha256(&material);
+            }
+        }
+    }
 
     #[test]
     fn sha256_is_32_bytes_and_distinct() {
@@ -287,41 +431,29 @@ mod tests {
 
     #[test]
     fn ed25519_verify_roundtrip_and_tamper() {
-        let rng = SystemRandom::new();
-        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).expect("generate key");
-        let key = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).expect("load key");
-        let public = key.public_key().as_ref().to_vec();
+        let (public, sign) = signers::ed25519();
         let message = sha256(b"canonical-audit-payload");
-        let signature = key.sign(&message);
+        let signature = sign(&message);
 
-        assert!(verify_ed25519(&public, &message, signature.as_ref()));
+        assert!(verify_ed25519(&public, &message, &signature));
         let tampered = sha256(b"canonical-audit-payload-edited");
         assert!(
-            !verify_ed25519(&public, &tampered, signature.as_ref()),
+            !verify_ed25519(&public, &tampered, &signature),
             "a signature must not verify against a tampered message"
         );
     }
 
     #[test]
     fn es256_verify_roundtrip_and_wrong_key() {
-        let rng = SystemRandom::new();
-        let make = || {
-            let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
-                .expect("generate key");
-            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref())
-                .expect("load key")
-        };
-        let key_a = make();
-        let key_b = make();
-        let public_a = key_a.public_key().as_ref().to_vec();
-        let public_b = key_b.public_key().as_ref().to_vec();
+        let (public_a, sign_a) = signers::es256();
+        let (public_b, _sign_b) = signers::es256();
         let message = b"anchor-payload-bytes";
-        let signature = key_a.sign(&rng, message).expect("sign");
+        let signature = sign_a(message);
 
-        assert_eq!(signature.as_ref().len(), 64, "P1363 r||s is 64 bytes");
-        assert!(verify_es256(&public_a, message, signature.as_ref()));
+        assert_eq!(signature.len(), 64, "P1363 r||s is 64 bytes");
+        assert!(verify_es256(&public_a, message, &signature));
         assert!(
-            !verify_es256(&public_b, message, signature.as_ref()),
+            !verify_es256(&public_b, message, &signature),
             "a signature must not verify under a different key"
         );
     }
