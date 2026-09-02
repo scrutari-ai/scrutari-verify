@@ -18,6 +18,7 @@
 //! crate is a reference, not the only possible implementation.
 
 pub mod canonical;
+pub mod chain;
 pub mod crypto;
 pub mod hexutil;
 pub mod pack;

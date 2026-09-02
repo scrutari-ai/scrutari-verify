@@ -161,6 +161,20 @@ RESULT: PASS (pack is complete, untampered, and correctly signed)
 On any failed check the matching line reads `[FAIL]` with the offending row or
 anchor ids, the final line reads `RESULT: FAIL`, and the exit code is 1.
 
+## Chain packs (v1.1)
+
+Since v1.1.0 the same binary also verifies **chain/v1 packs** — exports
+of hash-chained audit tables and their signed chain-head anchors (the
+gateway's control-plane audit log). The pack header's `profile` field
+selects the engine automatically; there is nothing to configure. A PASS
+proves the exported rows link hash-to-hash without a break, every
+anchor's signature verifies over its pinned canonical payload, and the
+anchors themselves chain to one another — so rewriting any anchored row
+would require re-signing history with the anchor key.
+
+Also since v1.1.0: running `scrutari-verify` with no pack argument on a
+terminal prints help instead of waiting silently on stdin.
+
 ## Pack format v2
 
 A pack is JSONL: one JSON object per line, one tenant and one time window per

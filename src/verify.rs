@@ -36,7 +36,7 @@ impl Report {
         !self.findings.is_empty() && self.findings.iter().all(|f| f.ok)
     }
 
-    fn ok(&mut self, check: &str, detail: impl Into<String>) {
+    pub(crate) fn ok(&mut self, check: &str, detail: impl Into<String>) {
         self.findings.push(Finding {
             check: check.to_string(),
             ok: true,
@@ -44,7 +44,7 @@ impl Report {
         });
     }
 
-    fn fail(&mut self, check: &str, detail: impl Into<String>) {
+    pub(crate) fn fail(&mut self, check: &str, detail: impl Into<String>) {
         self.findings.push(Finding {
             check: check.to_string(),
             ok: false,
@@ -52,7 +52,7 @@ impl Report {
         });
     }
 
-    fn record(&mut self, check: &str, ok: bool, detail: impl Into<String>) {
+    pub(crate) fn record(&mut self, check: &str, ok: bool, detail: impl Into<String>) {
         if ok {
             self.ok(check, detail);
         } else {

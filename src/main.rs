@@ -8,6 +8,7 @@
 //!
 //! Exit codes: 0 = PASS, 1 = verification FAILED, 2 = could not read / serialize.
 
+use std::io::IsTerminal;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
@@ -16,12 +17,13 @@ use std::process::ExitCode;
 use clap::Parser;
 use serde::Serialize;
 
+use scrutari_verify::chain::{is_chain_pack, verify_chain};
 use scrutari_verify::verify::{Finding, Report, verify};
 
 #[derive(Parser)]
 #[command(
     name = "scrutari-verify",
-    about = "Offline verifier for Scrutari audit-export packs (format v2).",
+    about = "Offline verifier for Scrutari audit-export packs (Merkle v2 and chain/v1).",
     version
 )]
 struct Cli {
@@ -42,6 +44,19 @@ struct JsonReport<'a> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
+    // No pack argument AND stdin is a terminal: nothing is coming.
+    // Without this check the process blocks silently on a TTY read —
+    // an operator typing `scrutari-verify` to see what it does gets a
+    // hang instead of help. Piped stdin still works exactly as
+    // documented.
+    if cli.pack.is_none() && std::io::stdin().is_terminal() {
+        use clap::CommandFactory;
+        let _ = Cli::command().print_help();
+        eprintln!();
+        eprintln!("scrutari-verify: pass --pack <file>, or pipe a pack on stdin.");
+        return ExitCode::from(2);
+    }
+
     let input = match read_input(cli.pack.as_deref()) {
         Ok(text) => text,
         Err(why) => {
@@ -50,7 +65,14 @@ fn main() -> ExitCode {
         }
     };
 
-    let report = verify(&input);
+    // chain/v1 packs (hash-chained audit tables with signed chain-head
+    // anchors) and Merkle v2 packs share one CLI; the header's `profile`
+    // field picks the engine.
+    let report: Report = if is_chain_pack(&input) {
+        verify_chain(&input)
+    } else {
+        verify(&input)
+    };
     let passed = report.passed();
 
     if cli.json {
