@@ -141,10 +141,10 @@ records declare. The specification text is licensed Apache-2.0, the same as
 the verifier, and third-party implementations — emitters that produce packs,
 or independent verifiers — are welcome and require no permission. The
 normative conformance suite is the verifier's own test suite, which exercises
-each tamper class against the checks above; exported golden test vectors (one
-valid pack and one per tamper class, generated from the synthetic demo
-generator in `examples/`) are planned so emitters can test without running
-Rust. Changes to the format bump the version; existing verifiers ignore
+each tamper class against the checks above; golden test vectors — one
+valid pack and one per tamper class, with the conformance table in
+[`vectors/README.md`](../vectors/README.md) — let emitters test without
+running Rust. Changes to the format bump the version; existing verifiers ignore
 record kinds they predate rather than failing.
 
 ## Verifying a pack
