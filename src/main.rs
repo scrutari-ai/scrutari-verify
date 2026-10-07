@@ -7,6 +7,11 @@
 //! ```
 //!
 //! Exit codes: 0 = PASS, 1 = verification FAILED, 2 = could not read / serialize.
+//!
+//! Human output is colorized only when stdout is an interactive terminal;
+//! piped output, `NO_COLOR` set to a non-empty value, or `TERM=dumb` all
+//! give plain text, so CI logs and shell pipelines stay stable. `--json`
+//! output is never colorized.
 
 use std::io::IsTerminal;
 use std::io::Read;
@@ -68,10 +73,10 @@ fn main() -> ExitCode {
     // chain/v1 packs (hash-chained audit tables with signed chain-head
     // anchors) and Merkle v2 packs share one CLI; the header's `profile`
     // field picks the engine.
-    let report: Report = if is_chain_pack(&input) {
-        verify_chain(&input)
+    let (report, profile): (Report, &str) = if is_chain_pack(&input) {
+        (verify_chain(&input), "chain/v1")
     } else {
-        verify(&input)
+        (verify(&input), "merkle/v2")
     };
     let passed = report.passed();
 
@@ -88,7 +93,7 @@ fn main() -> ExitCode {
             }
         }
     } else {
-        print_human(&report, passed);
+        print_human(&report, passed, profile);
     }
 
     if passed {
@@ -114,17 +119,107 @@ fn read_stdin() -> Result<String, String> {
     Ok(buf)
 }
 
-fn print_human(report: &Report, passed: bool) {
-    println!("Scrutari audit-export verification (pack format v2)");
+// ── Human report rendering ──────────────────────────────────────────
+//
+// Hand-rolled ANSI on purpose: this binary is the thing auditors are
+// asked to trust, so its output path stays dependency-free and short
+// enough to read in one sitting. 16-color SGR codes only, nothing a
+// terminal from this century cannot render.
+
+const RESET: &str = "\x1b[0m";
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
+const GREEN: &str = "\x1b[32m";
+const RED: &str = "\x1b[31m";
+/// Bold bright-white on green, for the PASS verdict badge.
+const BADGE_PASS: &str = "\x1b[1;97;42m";
+/// Bold bright-white on red, for the FAIL verdict badge.
+const BADGE_FAIL: &str = "\x1b[1;97;41m";
+
+/// Column width for check names; fits the widest one,
+/// `structure.manifest_terminal` (27 chars), across both engines.
+const CHECK_COL: usize = 28;
+
+/// Color is opt-out, never forced: an interactive stdout gets it, and
+/// `NO_COLOR` (non-empty) or `TERM=dumb` turns it back off. Anything
+/// piped or redirected is plain bytes.
+fn use_color() -> bool {
+    if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+        return false;
+    }
+    if std::env::var_os("TERM").is_some_and(|t| t == "dumb") {
+        return false;
+    }
+    std::io::stdout().is_terminal()
+}
+
+fn print_human(report: &Report, passed: bool, profile: &str) {
+    let total = report.findings.len();
+    let ok = report.findings.iter().filter(|f| f.ok).count();
+    if use_color() {
+        print_pretty(report, passed, profile, ok, total);
+    } else {
+        print_plain(report, passed, profile, ok, total);
+    }
+}
+
+/// Colorized report for interactive terminals.
+fn print_pretty(report: &Report, passed: bool, profile: &str, ok: usize, total: usize) {
+    println!(
+        "{BOLD}scrutari-verify{RESET} {DIM}offline verification of a Scrutari audit pack{RESET}"
+    );
+    println!("{DIM}pack profile: {profile}{RESET}");
+    println!();
+    for f in &report.findings {
+        if f.ok {
+            println!(
+                "  {GREEN}\u{2713}{RESET} {:<CHECK_COL$} {DIM}{}{RESET}",
+                f.check, f.detail
+            );
+        } else {
+            println!(
+                "  {RED}\u{2717} {BOLD}{:<CHECK_COL$}{RESET} {RED}{}{RESET}",
+                f.check, f.detail
+            );
+        }
+    }
+    println!();
+    if passed {
+        println!(
+            " {BADGE_PASS} PASS {RESET} {GREEN}{ok}/{total} checks passed.{RESET} The pack is complete, untampered, and correctly signed."
+        );
+    } else if total == 0 {
+        println!(
+            " {BADGE_FAIL} FAIL {RESET} {RED}{BOLD}No checks ran; the input is not a readable pack.{RESET}"
+        );
+    } else {
+        println!(
+            " {BADGE_FAIL} FAIL {RESET} {RED}{BOLD}{failed} of {total} checks failed.{RESET} Do not rely on this pack as evidence; the failed checks above say why.",
+            failed = total - ok
+        );
+    }
+}
+
+/// Plain report for pipes, CI, `NO_COLOR`, and dumb terminals. Keeps the
+/// original greppable shape: `[PASS]`/`[FAIL]` per check, `RESULT:` verdict.
+fn print_plain(report: &Report, passed: bool, profile: &str, ok: usize, total: usize) {
+    println!("Scrutari audit-export verification (profile: {profile})");
     println!("====================================================");
     for f in &report.findings {
         let mark = if f.ok { "PASS" } else { "FAIL" };
-        println!("[{mark}] {:<22} {}", f.check, f.detail);
+        println!("[{mark}] {:<CHECK_COL$} {}", f.check, f.detail);
     }
     println!("----------------------------------------------------");
     if passed {
-        println!("RESULT: PASS (pack is complete, untampered, and correctly signed)");
+        println!(
+            "RESULT: PASS ({ok}/{total} checks passed; pack is complete, untampered, and correctly signed)"
+        );
+    } else if total == 0 {
+        println!("RESULT: FAIL (no checks ran; the input is not a readable pack)");
     } else {
-        println!("RESULT: FAIL (one or more checks failed, see above)");
+        println!(
+            "RESULT: FAIL ({failed} of {total} checks failed, see above)",
+            failed = total - ok
+        );
     }
 }

@@ -138,8 +138,8 @@ curl -LO https://scrutari.ai/demo-evidence-pack.jsonl
 scrutari-verify --pack demo-evidence-pack.jsonl
 ```
 
-Expected: every check passes and the run ends with
-`RESULT: PASS (pack is complete, untampered, and correctly signed)`.
+Expected: every check passes and the run ends with a green PASS
+verdict (`RESULT: PASS (14/14 checks passed; ...)` when piped).
 Then flip one byte anywhere in the file and run it again.
 
 ## Usage
@@ -153,31 +153,35 @@ cat export.jsonl | scrutari-verify           # reads stdin when --pack omitted
 Exit codes: `0` means PASS, `1` means verification failed, `2` means the pack
 could not be read or the report could not be serialized.
 
-Example PASS output:
+Example output against the bundled sample pack (plain form, as piped):
 
 ```
-Scrutari audit-export verification (pack format v2)
+Scrutari audit-export verification (profile: merkle/v2)
 ====================================================
-[PASS] structure.parse        all lines parsed
-[PASS] structure.header       v2 header, tenant acme
-[PASS] structure.manifest_terminal terminal manifest present (pack not truncated)
-[PASS] structure.counts       manifest counts {audit:0, ai_audit:5, ai_signed:5, anchors:2} vs actual {audit:0, ai_audit:5, ai_signed:5, anchors:2}
-[PASS] structure.identity     header tenant acme / manifest tenant acme (v2)
-[PASS] signing_keys           3 key(s) well-formed
-[PASS] row_integrity          5 row(s) hash-match their payload
-[PASS] row_signature          5 signed row(s) verified
-[PASS] anchor_signature       2 anchor signature(s) verified
-[PASS] sovereign_recompute    1 sovereign anchor root(s) recomputed
-[PASS] fleet_inclusion        3 pre-sovereign row(s) proven included
-[PASS] chain_continuity       all chains link cleanly
-[PASS] genesis_seam           seam clean at cursor 5
-[PASS] coverage               all 5 row(s) covered by a present anchor
+[PASS] structure.parse              all lines parsed
+[PASS] structure.header             v2 header, tenant demo-clinic
+[PASS] structure.manifest_terminal  terminal manifest present (pack not truncated)
+[PASS] structure.counts             manifest counts {audit:0, ai_audit:5, ai_signed:5, anchors:2} vs actual {audit:0, ai_audit:5, ai_signed:5, anchors:2}
+[PASS] structure.identity           header tenant demo-clinic / manifest tenant demo-clinic (v2)
+[PASS] signing_keys                 3 key(s) well-formed
+[PASS] row_integrity                5 row(s) hash-match their payload
+[PASS] row_signature                5 signed row(s) verified
+[PASS] anchor_signature             2 anchor signature(s) verified
+[PASS] sovereign_recompute          1 sovereign anchor root(s) recomputed
+[PASS] fleet_inclusion              3 pre-sovereign row(s) proven included
+[PASS] chain_continuity             all chains link cleanly
+[PASS] genesis_seam                 seam clean at cursor 5
+[PASS] coverage                     all 5 row(s) covered by a present anchor
 ----------------------------------------------------
-RESULT: PASS (pack is complete, untampered, and correctly signed)
+RESULT: PASS (14/14 checks passed; pack is complete, untampered, and correctly signed)
 ```
 
-On any failed check the matching line reads `[FAIL]` with the offending row or
-anchor ids, the final line reads `RESULT: FAIL`, and the exit code is 1.
+On any failed check the matching line reads `[FAIL]` (a red `✗` in a
+terminal) with the offending row or anchor ids, the verdict line reads
+`RESULT: FAIL` with the failing count, and the exit code is 1. In an
+interactive terminal the same report renders with color, check marks,
+and a PASS or FAIL badge; piped output, a non-empty `NO_COLOR`, or
+`TERM=dumb` keep it plain.
 
 ## Chain packs (v1.1)
 
