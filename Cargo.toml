@@ -1,10 +1,10 @@
 [package]
 name = "scrutari-verify"
-version = "1.3.0"
+version = "1.4.0"
 edition = "2024"
 rust-version = "1.93.0"
 license = "Apache-2.0"
-description = "Offline verifier for Scrutari audit-export packs (format v2): proves integrity, Merkle inclusion, signature validity, and chain continuity with no network and no Scrutari services."
+description = "Offline verifier for Scrutari audit-export packs and signed CBOM Report bundles."
 repository = "https://github.com/scrutari-ai/scrutari-verify"
 keywords = ["audit", "merkle", "verification", "compliance", "tamper-evidence"]
 categories = ["command-line-utilities", "cryptography"]
@@ -48,6 +48,9 @@ wasm-bindgen = { version = "0.2.106", optional = true }
 # crates): getrandom needs its js backend selected explicitly there.
 getrandom = { version = "0.2.17", features = ["js"], optional = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+zip = { version = "0.6.6", default-features = false }
+
 # aws-lc-rs's non-FIPS (`aws-lc-sys`) and FIPS-validated (`fips`) builds are
 # mutually exclusive at compile time, so the choice is expressed as features:
 #
@@ -62,6 +65,9 @@ fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
 #   --no-default-features --features wasm
 wasm-crypto = ["dep:ed25519-dalek", "dep:p256", "dep:sha2"]
 wasm = ["wasm-crypto", "dep:wasm-bindgen", "dep:getrandom"]
+
+[dev-dependencies]
+tempfile = "3"
 
 # The demo-pack generator signs with aws-lc, so it only exists on the
 # native backends.

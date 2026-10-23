@@ -22,19 +22,24 @@ use std::process::ExitCode;
 use clap::Parser;
 use serde::Serialize;
 
+use scrutari_verify::bundle::verify_bundle;
 use scrutari_verify::chain::{is_chain_pack, verify_chain};
 use scrutari_verify::verify::{Finding, Report, verify};
 
 #[derive(Parser)]
 #[command(
     name = "scrutari-verify",
-    about = "Offline verifier for Scrutari audit-export packs (Merkle v2 and chain/v1).",
+    about = "Offline verifier for Scrutari audit-export packs and CBOM Report bundles.",
     version
 )]
 struct Cli {
     /// Path to the JSONL export pack. Reads stdin when omitted or set to '-'.
-    #[arg(long, short)]
+    #[arg(long, short, conflicts_with = "bundle")]
     pack: Option<PathBuf>,
+    #[arg(long, conflicts_with = "pack", requires = "report_key")]
+    bundle: Option<PathBuf>,
+    #[arg(long, requires = "bundle")]
+    report_key: Option<PathBuf>,
     /// Emit a machine-readable JSON report instead of human-readable text.
     #[arg(long)]
     json: bool,
@@ -54,7 +59,7 @@ fn main() -> ExitCode {
     // an operator typing `scrutari-verify` to see what it does gets a
     // hang instead of help. Piped stdin still works exactly as
     // documented.
-    if cli.pack.is_none() && std::io::stdin().is_terminal() {
+    if cli.pack.is_none() && cli.bundle.is_none() && std::io::stdin().is_terminal() {
         use clap::CommandFactory;
         let _ = Cli::command().print_help();
         eprintln!();
@@ -62,21 +67,42 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    let input = match read_input(cli.pack.as_deref()) {
-        Ok(text) => text,
-        Err(why) => {
-            eprintln!("scrutari-verify: cannot read pack: {why}");
+    let (report, profile): (Report, &str) = if let Some(bundle) = &cli.bundle {
+        let bytes = match std::fs::read(bundle) {
+            Ok(bytes) => bytes,
+            Err(why) => {
+                eprintln!("scrutari-verify: cannot read bundle: {why}");
+                return ExitCode::from(2);
+            }
+        };
+        let Some(report_key_path) = &cli.report_key else {
+            eprintln!("scrutari-verify: --report-key is required with --bundle");
             return ExitCode::from(2);
-        }
-    };
-
-    // chain/v1 packs (hash-chained audit tables with signed chain-head
-    // anchors) and Merkle v2 packs share one CLI; the header's `profile`
-    // field picks the engine.
-    let (report, profile): (Report, &str) = if is_chain_pack(&input) {
-        (verify_chain(&input), "chain/v1")
+        };
+        let report_key = match std::fs::read_to_string(report_key_path) {
+            Ok(key) => key,
+            Err(why) => {
+                eprintln!("scrutari-verify: cannot read report key: {why}");
+                return ExitCode::from(2);
+            }
+        };
+        (
+            verify_bundle(&bytes, &report_key),
+            "scrutari-cbom-report/v1",
+        )
     } else {
-        (verify(&input), "merkle/v2")
+        let input = match read_input(cli.pack.as_deref()) {
+            Ok(text) => text,
+            Err(why) => {
+                eprintln!("scrutari-verify: cannot read pack: {why}");
+                return ExitCode::from(2);
+            }
+        };
+        if is_chain_pack(&input) {
+            (verify_chain(&input), "chain/v1")
+        } else {
+            (verify(&input), "merkle/v2")
+        }
     };
     let passed = report.passed();
 
@@ -165,9 +191,12 @@ fn print_human(report: &Report, passed: bool, profile: &str) {
 
 /// Colorized report for interactive terminals.
 fn print_pretty(report: &Report, passed: bool, profile: &str, ok: usize, total: usize) {
-    println!(
-        "{BOLD}scrutari-verify{RESET} {DIM}offline verification of a Scrutari audit pack{RESET}"
-    );
+    let label = if profile == "scrutari-cbom-report/v1" {
+        "offline verification of a Scrutari report bundle"
+    } else {
+        "offline verification of a Scrutari audit pack"
+    };
+    println!("{BOLD}scrutari-verify{RESET} {DIM}{label}{RESET}");
     println!("{DIM}pack profile: {profile}{RESET}");
     println!();
     for f in &report.findings {
@@ -203,7 +232,12 @@ fn print_pretty(report: &Report, passed: bool, profile: &str, ok: usize, total: 
 /// Plain report for pipes, CI, `NO_COLOR`, and dumb terminals. Keeps the
 /// original greppable shape: `[PASS]`/`[FAIL]` per check, `RESULT:` verdict.
 fn print_plain(report: &Report, passed: bool, profile: &str, ok: usize, total: usize) {
-    println!("Scrutari audit-export verification (profile: {profile})");
+    let label = if profile == "scrutari-cbom-report/v1" {
+        "Scrutari report bundle verification"
+    } else {
+        "Scrutari audit-export verification"
+    };
+    println!("{label} (profile: {profile})");
     println!("====================================================");
     for f in &report.findings {
         let mark = if f.ok { "PASS" } else { "FAIL" };

@@ -17,6 +17,8 @@
 //! enough that a third party can reimplement this verifier independently; this
 //! crate is a reference, not the only possible implementation.
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod bundle;
 pub mod canonical;
 pub mod chain;
 pub mod crypto;

@@ -10,6 +10,29 @@ untampered, included under signed anchors, and signed by the declared keys.
 The verifier is open source so you can read every check it performs, build it
 yourself, and run it without trusting Scrutari's binaries or infrastructure.
 
+## CBOM Report bundles
+
+Run `scrutari-verify --bundle report.zip --report-key report-key.hex` on an
+offline machine. Obtain `report-key.hex` from Scrutari through a separately
+trusted channel. Do not use a key copied from the bundle itself. A valid
+bundle contains exactly `cbom.json`, `report.pdf`, and `manifest.json`.
+Publish the production key at `https://scrutari.ai/pci/report-key.hex` after
+provisioning it. That URL is a planned publication point, not a bundled key.
+
+The manifest has profile `scrutari-cbom-report/v1`, customer name, report date
+in `YYYY-MM-DD` form, signer key ID, SHA-256 hashes of both files, algorithm
+`ed25519`, and a hex signature. The signer serializes the first six fields in
+that order as compact JSON, with file names sorted, hashes those bytes with
+SHA-256, then signs the 32-byte hash with Ed25519. The signer key ID is the
+lowercase hex encoding of the first eight bytes of SHA-256 of the raw public
+key. This matches the existing audit signing pattern.
+
+The verifier checks the exact ZIP member list, both file hashes, key ID, and
+signature. Exit 0 means PASS, exit 1 means FAIL, and exit 2 means the input
+or trusted key file could not be read. PASS proves the issued files match
+what the signing key signed. It does not prove scope completeness, customer
+attestations, or PCI DSS compliance.
+
 ## What a PASS proves
 
 Given only an export pack, `scrutari-verify` establishes:
