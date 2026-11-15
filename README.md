@@ -181,8 +181,9 @@ format this tool does not verify.
 
 An older export layout (`"format_version": 1` in its closing manifest) has no
 header, no public keys and no anchor reference per row, so it cannot be
-verified offline. Given such a file the tool says so, checks nothing, and
-exits `2`:
+verified offline. Since v1.5.0 the tool says so, checks nothing, and exits
+`2`. Earlier versions ran the v2 checks over it and reported a failed
+verification:
 
 ```
 scrutari-verify: not verified (audit-export/v1)
