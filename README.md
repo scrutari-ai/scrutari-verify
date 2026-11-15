@@ -174,7 +174,24 @@ cat export.jsonl | scrutari-verify           # reads stdin when --pack omitted
 ```
 
 Exit codes: `0` means PASS, `1` means verification failed, `2` means the pack
-could not be read or the report could not be serialized.
+could not be read, the report could not be serialized, or the file is a
+format this tool does not verify.
+
+### Format v1 audit exports
+
+An older export layout (`"format_version": 1` in its closing manifest) has no
+header, no public keys and no anchor reference per row, so it cannot be
+verified offline. Given such a file the tool says so, checks nothing, and
+exits `2`:
+
+```
+scrutari-verify: not verified (audit-export/v1)
+This file is a format v1 audit export. It has no header, no public keys and no anchor reference per row, so it cannot be verified offline, and nothing in it was checked. Export the same tenant as a format v2 compliance pack and verify that file.
+```
+
+With `--json` the output is `{"passed": false, "unsupported_format":
+"audit-export/v1", "detail": "..."}`. This is not a failed verification: the
+file may be intact, but it carries nothing to check it against.
 
 Example output against the bundled sample pack (plain form, as piped):
 

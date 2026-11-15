@@ -6,7 +6,9 @@
 //! cat export.jsonl | scrutari-verify         # reads stdin when --pack omitted
 //! ```
 //!
-//! Exit codes: 0 = PASS, 1 = verification FAILED, 2 = could not read / serialize.
+//! Exit codes: 0 = PASS, 1 = verification FAILED, 2 = could not read /
+//! serialize, or the file is a format this tool does not verify (a format
+//! v1 audit export).
 //!
 //! Human output is colorized only when stdout is an interactive terminal;
 //! piped output, `NO_COLOR` set to a non-empty value, or `TERM=dumb` all
@@ -24,6 +26,9 @@ use serde::Serialize;
 
 use scrutari_verify::bundle::verify_bundle;
 use scrutari_verify::chain::{is_chain_pack, verify_chain};
+use scrutari_verify::legacy_export::{
+    LEGACY_EXPORT_NOTICE, LEGACY_EXPORT_PROFILE, is_legacy_export,
+};
 use scrutari_verify::verify::{Finding, Report, verify};
 
 #[derive(Parser)]
@@ -49,6 +54,16 @@ struct Cli {
 struct JsonReport<'a> {
     passed: bool,
     findings: &'a [Finding],
+}
+
+/// `--json` output for a file this tool does not verify. `passed` is
+/// present and false so a consumer that reads only that field cannot
+/// mistake the file for verified evidence.
+#[derive(Serialize)]
+struct UnsupportedFormat {
+    passed: bool,
+    unsupported_format: &'static str,
+    detail: &'static str,
 }
 
 fn main() -> ExitCode {
@@ -100,6 +115,8 @@ fn main() -> ExitCode {
         };
         if is_chain_pack(&input) {
             (verify_chain(&input), "chain/v1")
+        } else if is_legacy_export(&input) {
+            return report_legacy_export(cli.json);
         } else {
             (verify(&input), "merkle/v2")
         }
@@ -127,6 +144,26 @@ fn main() -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// Say what a format v1 export is and stop. Not a failed verification:
+/// nothing was checked, so the exit code is 2 and no verdict is printed.
+fn report_legacy_export(json: bool) -> ExitCode {
+    if json {
+        let view = UnsupportedFormat {
+            passed: false,
+            unsupported_format: LEGACY_EXPORT_PROFILE,
+            detail: LEGACY_EXPORT_NOTICE,
+        };
+        match serde_json::to_string_pretty(&view) {
+            Ok(text) => println!("{text}"),
+            Err(why) => eprintln!("scrutari-verify: report serialize failed: {why}"),
+        }
+    } else {
+        eprintln!("scrutari-verify: not verified ({LEGACY_EXPORT_PROFILE})");
+        eprintln!("{LEGACY_EXPORT_NOTICE}");
+    }
+    ExitCode::from(2)
 }
 
 fn read_input(path: Option<&Path>) -> Result<String, String> {

@@ -23,6 +23,7 @@ pub mod canonical;
 pub mod chain;
 pub mod crypto;
 pub mod hexutil;
+pub mod legacy_export;
 pub mod pack;
 pub mod verify;
 #[cfg(feature = "wasm")]
